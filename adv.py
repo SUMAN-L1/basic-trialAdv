@@ -7,6 +7,12 @@ from scipy import stats
 from sklearn.decomposition import PCA
 from statsmodels.formula.api import ols
 
+# Set up the app
+st.title("Descriptive Statistics and Advanced Analytics by [SumanEcon]")
+
+# File uploader
+uploaded_file = st.file_uploader("Upload your data file (CSV or Excel or xls)", type=['csv', 'xlsx','xls'])
+
 # Function to read file
 def read_file(file):
     try:
@@ -26,25 +32,15 @@ def compute_cagr(data, column):
     data = data[[column]].dropna().reset_index(drop=True)
     data['Time'] = np.arange(1, len(data) + 1)
     data['LogColumn'] = np.log(data[column])
-    
     model = ols('LogColumn ~ Time', data=data).fit()
-    
-    cagr = (np.exp(model.params['Time']) - 1) * 100  # Convert to percentage
-    p_value = model.pvalues['Time']
-    adj_r_squared = model.rsquared_adj
-    
-    return cagr, p_value, adj_r_squared
+    cagr = (np.exp(model.params['Time']) - 1) * 100
+    return cagr, model.pvalues['Time'], model.rsquared_adj
 
 # Function to compute CDVI
 def compute_cdvi(cv, adj_r_squared):
     return cv * np.sqrt(1 - adj_r_squared)
 
-# Function to compute outliers
-def compute_outliers(column):
-    z_scores = np.abs(stats.zscore(column.dropna()))
-    return np.sum(z_scores > 3)
-
-# Function to calculate correlation p-values
+# Function to compute correlation p-values
 def correlation_p_values(df):
     corr_matrix = df.corr()
     p_values = pd.DataFrame(np.ones_like(corr_matrix), columns=corr_matrix.columns, index=corr_matrix.index)
@@ -55,34 +51,26 @@ def correlation_p_values(df):
                 p_values.iloc[i, j] = p_values.iloc[j, i] = p_value
     return p_values
 
-# Function to plot bubble matrix
-def plot_bubble_matrix(p_values):
-    fig, ax = plt.subplots(figsize=(10, 8))
-    sns.scatterplot(x=p_values.columns, y=p_values.index, size=p_values.values.flatten(), sizes=(20, 200), hue=p_values.values.flatten(), palette='coolwarm', legend=None, ax=ax)
-    plt.title('Bubble Matrix of Correlation P-Values')
-    plt.xticks(rotation=90)
-    return fig
+# Function to plot heatmap
+def plot_heatmap(matrix, title):
+    fig, ax = plt.subplots()
+    sns.heatmap(matrix, annot=True, cmap='coolwarm', ax=ax)
+    ax.set_title(title)
+    st.pyplot(fig)
 
-# Function to plot contour plot
-def plot_contour(p_values):
-    fig, ax = plt.subplots(figsize=(10, 8))
-    sns.kdeplot(data=p_values.values.flatten(), cmap='coolwarm', fill=True, ax=ax)
-    plt.title('Contour Plot of Correlation P-Values')
-    return fig
+# Function to plot correlation circle
+def plot_correlation_circle(pca, columns):
+    fig, ax = plt.subplots()
+    for i, v in enumerate(columns):
+        ax.arrow(0, 0, pca.components_[0, i], pca.components_[1, i], head_width=0.05, head_length=0.05, color='b')
+        ax.text(pca.components_[0, i]*1.1, pca.components_[1, i]*1.1, v, color='r')
+    ax.set_xlim([-1, 1])
+    ax.set_ylim([-1, 1])
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.set_title("Correlation Circle")
+    st.pyplot(fig)
 
-# Function to plot dot plot
-def plot_dot_plot(p_values):
-    fig, ax = plt.subplots(figsize=(12, 8))
-    for i in range(p_values.shape[0]):
-        ax.plot(p_values.columns, p_values.iloc[i], 'o', label=p_values.index[i])
-    plt.xticks(rotation=90)
-    plt.title('Dot Plot of Correlation P-Values')
-    plt.xlabel('Variables')
-    plt.ylabel('P-Values')
-    plt.legend()
-    return fig
-
-# If a file is uploaded
 if uploaded_file:
     df = read_file(uploaded_file)
     if df is not None:
@@ -91,78 +79,39 @@ if uploaded_file:
 
         # Descriptive Statistics
         st.subheader("Descriptive Statistics")
-        # Filter out qualitative columns and 'Year' column
-        numeric_df = df.select_dtypes(include=np.number)
-        numeric_df = numeric_df.loc[:, ~numeric_df.columns.str.contains('Year', case=False)]
-        
-        # Compute basic statistics
+        numeric_df = df.select_dtypes(include=np.number).loc[:, ~df.columns.str.contains('Year', case=False)]
         descriptive_stats = numeric_df.describe().T
         descriptive_stats['Mode'] = numeric_df.mode().iloc[0]
         descriptive_stats['Variance'] = numeric_df.var()
         descriptive_stats['Standard Deviation'] = numeric_df.std()
         descriptive_stats['Skewness'] = numeric_df.skew()
         descriptive_stats['Kurtosis'] = numeric_df.kurt()
-      
-        # Compute CAGR and related metrics
-        cagr_results = numeric_df.apply(lambda col: compute_cagr(numeric_df, col.name)[0])
+        cagr_results, p_value_results, adj_r_squared_results = zip(*[compute_cagr(numeric_df, col) for col in numeric_df.columns])
         cv_results = numeric_df.apply(lambda col: (col.std() / col.mean()) * 100)
-        p_value_results = numeric_df.apply(lambda col: compute_cagr(numeric_df, col.name)[1])
-        adj_r_squared_results = numeric_df.apply(lambda col: compute_cagr(numeric_df, col.name)[2])
-        cdvi_results = numeric_df.apply(lambda col: compute_cdvi((numeric_df[col.name].std() / numeric_df[col.name].mean()) * 100, compute_cagr(numeric_df, col.name)[2]))
-        
+        cdvi_results = [compute_cdvi(cv, adj_r_squared) for cv, adj_r_squared in zip(cv_results, adj_r_squared_results)]
         descriptive_stats['CAGR (%)'] = cagr_results
         descriptive_stats['P-Value (CAGR)'] = p_value_results
         descriptive_stats['CV (%)'] = cv_results
         descriptive_stats['Adjusted R Squared'] = adj_r_squared_results
         descriptive_stats['CDVI'] = cdvi_results
-        
-        # Round all statistics to three decimal places
         descriptive_stats = descriptive_stats.round(3)
-        
-        # Final descriptive statistics table
         basic_stats = pd.DataFrame({
             'Column': numeric_df.columns,
             'Data Type': numeric_df.dtypes,
             'Missing Values': numeric_df.isnull().sum()
         }).set_index('Column').join(descriptive_stats).reset_index()
-        
         st.write(basic_stats)
-        
+
         # Correlation Analysis
         st.subheader("Correlation Analysis")
         corr_matrix = numeric_df.corr()
         st.write("**Correlation Matrix:**")
         st.write(corr_matrix)
-
-        st.write("**Correlation Heatmap:**")
-        fig, ax = plt.subplots()
-        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', ax=ax)
-        st.pyplot(fig)
-        
-        # Calculate p-values for correlation matrix
+        plot_heatmap(corr_matrix, "Correlation Heatmap")
         p_values = correlation_p_values(numeric_df)
-
         st.write("**Correlation P-values:**")
         st.write(p_values)
-
-        st.write("**Correlation P-value Heatmap:**")
-        fig, ax = plt.subplots()
-        sns.heatmap(p_values, annot=True, cmap='coolwarm', ax=ax)
-        st.pyplot(fig)
-
-        st.write("**Correlation P-value Bubble Matrix:**")
-        fig = plot_bubble_matrix(p_values)
-        st.pyplot(fig)
-
-        st.write("**Correlation P-value Contour Plot:**")
-        fig = plot_contour(p_values)
-        st.pyplot(fig)
-
-        st.write("**Correlation P-value Dot Plot:**")
-        fig = plot_dot_plot(p_values)
-        st.pyplot(fig)
-
-        st.write("**Significant Correlations:**")
+        plot_heatmap(p_values, "Correlation P-value Heatmap")
         significance_level = st.slider("Select significance level (alpha)", 0.01, 0.1, 0.05)
         significant_corrs = corr_matrix[p_values < significance_level]
         st.write(f"Significant correlations with p-value < {significance_level}:")
@@ -183,29 +132,16 @@ if uploaded_file:
         pca_result = pca.fit_transform(numeric_df.fillna(0))
         pca_df = pd.DataFrame(pca_result, columns=[f'PC{i+1}' for i in range(n_components)])
         st.write(pca_df)
-
-        st.write("**Scree Plot:**")
         explained_variance = pca.explained_variance_ratio_
         fig, ax = plt.subplots()
         ax.plot(range(1, len(explained_variance) + 1), explained_variance, 'o-')
         ax.set_xlabel("Principal Component")
         ax.set_ylabel("Explained Variance")
+        ax.set_title("Scree Plot")
         st.pyplot(fig)
-
-        st.write("**Correlation Circle:**")
-        pca_components = pca.components_
-        fig, ax = plt.subplots()
-        for i, v in enumerate(numeric_df.columns):
-            ax.arrow(0, 0, pca_components[0, i], pca_components[1, i], head_width=0.05, head_length=0.05, color='b')
-            ax.text(pca_components[0, i]*1.1, pca_components[1, i]*1.1, v, color='r')
-        ax.set_xlim([-1, 1])
-        ax.set_ylim([-1, 1])
-        ax.set_xlabel("PC1")
-        ax.set_ylabel("PC2")
-        ax.set_title("Correlation Circle")
-        st.pyplot(fig)
+        plot_correlation_circle(pca, numeric_df.columns)
 
         # Clustered Heatmap
         st.subheader("Clustered Heatmap")
-        fig = sns.clustermap(corr_matrix, annot=True, cmap='coolwarm')
-        st.pyplot(fig)
+        sns.clustermap(corr_matrix, annot=True, cmap='coolwarm')
+        st.pyplot()
